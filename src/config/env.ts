@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs';
 import { z } from 'zod';
 
 export const envSchema = z.object({
@@ -18,4 +19,9 @@ export function validateEnv(config: Record<string, unknown>): Env {
     );
   }
   return result.data;
+}
+
+export function loadEnv(): Env {
+  if (existsSync('.env')) process.loadEnvFile('.env');
+  return validateEnv(process.env);
 }

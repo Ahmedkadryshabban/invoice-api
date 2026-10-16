@@ -5,6 +5,7 @@ import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { LoggerModule } from 'nestjs-pino';
 import { ZodValidationPipe } from 'nestjs-zod';
 import { validateEnv, type Env } from './config/env.ts';
+import { DatabaseModule } from './database/database.module.ts';
 
 @Module({
   imports: [
@@ -25,6 +26,7 @@ import { validateEnv, type Env } from './config/env.ts';
       }),
     }),
     ThrottlerModule.forRoot([{ ttl: 60_000, limit: 100 }]),
+    DatabaseModule,
   ],
   providers: [
     { provide: APP_PIPE, useClass: ZodValidationPipe },

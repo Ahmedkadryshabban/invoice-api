@@ -12,6 +12,7 @@ async function bootstrap() {
   app.useLogger(app.get(Logger));
   app.use(helmet());
   app.setGlobalPrefix('v1');
+  app.enableShutdownHooks();
 
   const document = SwaggerModule.createDocument(
     app,
