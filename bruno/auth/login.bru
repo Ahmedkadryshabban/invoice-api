@@ -23,5 +23,5 @@ assert {
 }
 
 script:post-response {
-  bru.setEnvVar("accessToken", res.body.accessToken);
+  bru.setVar("accessToken", res.body.accessToken);
 }

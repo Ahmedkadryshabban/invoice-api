@@ -14,6 +14,7 @@ export const envSchema = z.object({
       z.enum(['s', 'm', 'h', 'd']),
     ])
     .default('1h'),
+  PUBLIC_URL: z.url().transform((url) => url.replace(/\/+$/, '')),
 });
 
 export type Env = z.infer<typeof envSchema>;
