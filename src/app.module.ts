@@ -7,6 +7,7 @@ import { ZodValidationPipe } from 'nestjs-zod';
 import { validateEnv, type Env } from './config/env.ts';
 import { DatabaseModule } from './database/database.module.ts';
 import { AuthModule } from './modules/auth/auth.module.ts';
+import { InvoicesModule } from './modules/invoices/invoices.module.ts';
 
 @Module({
   imports: [
@@ -29,6 +30,7 @@ import { AuthModule } from './modules/auth/auth.module.ts';
     ThrottlerModule.forRoot([{ ttl: 60_000, limit: 100 }]),
     DatabaseModule,
     AuthModule,
+    InvoicesModule,
   ],
   providers: [
     { provide: APP_PIPE, useClass: ZodValidationPipe },

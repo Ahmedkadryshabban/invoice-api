@@ -8,6 +8,13 @@
       "when": 1792165145970,
       "tag": "0000_create_users",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1792233728063,
+      "tag": "0001_create_invoices",
+      "breakpoints": true
     }
   ]
 }
