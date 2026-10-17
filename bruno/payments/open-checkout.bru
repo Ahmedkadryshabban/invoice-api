@@ -1,0 +1,15 @@
+meta {
+  name: open checkout
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/invoices/{{invoiceId}}/checkout
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: lt 400
+}

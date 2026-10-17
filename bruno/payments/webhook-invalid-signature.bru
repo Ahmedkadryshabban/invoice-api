@@ -1,0 +1,25 @@
+meta {
+  name: webhook invalid signature
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{baseUrl}}/webhooks/stripe
+  body: json
+  auth: none
+}
+
+headers {
+  stripe-signature: t=0,v1=invalid
+}
+
+body:json {
+  {
+    "type": "checkout.session.completed"
+  }
+}
+
+assert {
+  res.status: eq 400
+}

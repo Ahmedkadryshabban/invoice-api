@@ -1,0 +1,15 @@
+meta {
+  name: checkout success
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/checkout/success
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 200
+}

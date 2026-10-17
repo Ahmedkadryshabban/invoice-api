@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { desc, eq } from 'drizzle-orm';
+import { and, desc, eq } from 'drizzle-orm';
 import { DB, type Database } from '../../database/database.module.ts';
 import {
   invoices,
@@ -32,5 +32,35 @@ export class InvoicesRepository {
       this.db.$count(invoices, where),
     ]);
     return { items, total };
+  }
+
+  async findById(id: string): Promise<Invoice | null> {
+    const [invoice] = await this.db
+      .select()
+      .from(invoices)
+      .where(eq(invoices.id, id))
+      .limit(1);
+    return invoice ?? null;
+  }
+
+  async setStripeSession(
+    id: string,
+    stripeSessionId: string,
+  ): Promise<Invoice | null> {
+    const [invoice] = await this.db
+      .update(invoices)
+      .set({ stripeSessionId })
+      .where(and(eq(invoices.id, id), eq(invoices.status, 'pending')))
+      .returning();
+    return invoice ?? null;
+  }
+
+  async markPaid(id: string, stripeSessionId: string): Promise<Invoice | null> {
+    const [invoice] = await this.db
+      .update(invoices)
+      .set({ status: 'paid', paidAt: new Date(), stripeSessionId })
+      .where(and(eq(invoices.id, id), eq(invoices.status, 'pending')))
+      .returning();
+    return invoice ?? null;
   }
 }

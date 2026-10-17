@@ -1,0 +1,15 @@
+meta {
+  name: checkout cancel
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/checkout/cancel
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 200
+}

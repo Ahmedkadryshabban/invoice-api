@@ -8,7 +8,10 @@ import { AppModule } from './app.module.ts';
 import type { Env } from './config/env.ts';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule, { bufferLogs: true });
+  const app = await NestFactory.create(AppModule, {
+    bufferLogs: true,
+    rawBody: true,
+  });
   app.useLogger(app.get(Logger));
   app.use(helmet());
   app.setGlobalPrefix('v1');
