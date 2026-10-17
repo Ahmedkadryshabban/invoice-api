@@ -6,5 +6,6 @@ import { InvoicesService } from './invoices.service.ts';
 @Module({
   controllers: [InvoicesController],
   providers: [InvoicesService, InvoicesRepository],
+  exports: [InvoicesRepository],
 })
 export class InvoicesModule {}

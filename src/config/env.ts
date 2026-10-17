@@ -15,6 +15,8 @@ export const envSchema = z.object({
     ])
     .default('1h'),
   PUBLIC_URL: z.url().transform((url) => url.replace(/\/+$/, '')),
+  STRIPE_SECRET_KEY: z.string().startsWith('sk_test_'),
+  STRIPE_WEBHOOK_SECRET: z.string().startsWith('whsec_'),
 });
 
 export type Env = z.infer<typeof envSchema>;
