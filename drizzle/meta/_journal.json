@@ -15,6 +15,13 @@
       "when": 1792233728063,
       "tag": "0001_create_invoices",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1792310222178,
+      "tag": "0002_invoice_status_check",
+      "breakpoints": true
     }
   ]
 }

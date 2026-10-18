@@ -1,7 +1,8 @@
+import { sql } from 'drizzle-orm';
 import {
+  check,
   index,
   integer,
-  pgEnum,
   pgTable,
   text,
   timestamp,
@@ -9,8 +10,6 @@ import {
 } from 'drizzle-orm/pg-core';
 import { timestamps } from './columns.ts';
 import { users } from './users.table.ts';
-
-export const invoiceStatus = pgEnum('invoice_status', ['pending', 'paid']);
 
 export const invoices = pgTable(
   'invoices',
@@ -23,12 +22,17 @@ export const invoices = pgTable(
     description: text().notNull(),
     amountCents: integer().notNull(),
     currency: text().notNull(),
-    status: invoiceStatus().notNull().default('pending'),
+    status: text({ enum: ['pending', 'paid'] })
+      .notNull()
+      .default('pending'),
     stripeSessionId: text(),
     paidAt: timestamp({ withTimezone: true }),
     ...timestamps,
   },
-  (t) => [index('invoices_user_id_idx').on(t.userId)],
+  (t) => [
+    index('invoices_user_id_idx').on(t.userId),
+    check('invoices_status_check', sql`${t.status} in ('pending', 'paid')`),
+  ],
 );
 
 export type Invoice = typeof invoices.$inferSelect;
