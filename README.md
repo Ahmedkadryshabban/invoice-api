@@ -1,124 +1,149 @@
-<p align="center">
-  <a href="http://nestjs.com/" target="blank"><img src="https://nestjs.com/img/logo-small.svg" width="120" alt="Nest Logo" /></a>
-</p>
+# invoice-api
 
-[circleci-image]: https://img.shields.io/circleci/build/github/nestjs/nest/master?token=abc123def456
-[circleci-url]: https://circleci.com/gh/nestjs/nest
+Backend for a small invoicing app. A business user registers, creates invoices, and gets a payment link for each one. The customer opens the link and pays with Stripe Checkout (no account needed). A Stripe webhook marks the invoice as paid.
 
-  <p align="center">A progressive <a href="http://nodejs.org" target="_blank">Node.js</a> framework for building efficient and scalable server-side applications.</p>
-    <p align="center">
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/v/@nestjs/core.svg" alt="NPM Version" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/l/@nestjs/core.svg" alt="Package License" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/dm/@nestjs/common.svg" alt="NPM Downloads" /></a>
-<a href="https://circleci.com/gh/nestjs/nest" target="_blank"><img src="https://img.shields.io/circleci/build/github/nestjs/nest/master" alt="CircleCI" /></a>
-<a href="https://discord.gg/G7Qnnhy" target="_blank"><img src="https://img.shields.io/badge/discord-online-brightgreen.svg" alt="Discord"/></a>
-<a href="https://opencollective.com/nest#backer" target="_blank"><img src="https://opencollective.com/nest/backers/badge.svg" alt="Backers on Open Collective" /></a>
-<a href="https://opencollective.com/nest#sponsor" target="_blank"><img src="https://opencollective.com/nest/sponsors/badge.svg" alt="Sponsors on Open Collective" /></a>
-  <a href="https://paypal.me/kamilmysliwiec" target="_blank"><img src="https://img.shields.io/badge/Donate-PayPal-ff3f59.svg" alt="Donate us"/></a>
-    <a href="https://opencollective.com/nest#sponsor"  target="_blank"><img src="https://img.shields.io/badge/Support%20us-Open%20Collective-41B883.svg" alt="Support us"></a>
-  <a href="https://twitter.com/nestframework" target="_blank"><img src="https://img.shields.io/twitter/follow/nestframework.svg?style=social&label=Follow" alt="Follow us on Twitter"></a>
-</p>
-  <!--[![Backers on Open Collective](https://opencollective.com/nest/backers/badge.svg)](https://opencollective.com/nest#backer)
-  [![Sponsors on Open Collective](https://opencollective.com/nest/sponsors/badge.svg)](https://opencollective.com/nest#sponsor)-->
+Backend only. Stripe runs in **test mode** only.
 
-## Description
+## How it works
 
-[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
+1. The business user registers and logs in to get a JWT.
+2. They create an invoice and get back a `paymentUrl`.
+3. The customer opens `paymentUrl`. The API creates a Stripe Checkout Session and redirects to it.
+4. The customer pays on Stripe's page.
+5. Stripe calls the webhook, and the API marks the invoice `paid`.
 
-## Project setup
+## Stack
 
-```bash
-$ pnpm install
-```
+NestJS, TypeScript, PostgreSQL (Docker), Drizzle ORM, Zod, JWT + argon2, Stripe, pino, helmet, throttler, Swagger, Bruno, Cloudflare Tunnel.
 
-## Compile and run the project
+## Requirements
+
+- Node 22 and pnpm
+- Docker
+- [`cloudflared`](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/)
+- A Stripe account (sandbox / test mode)
+- [Bruno](https://www.usebruno.com/) (optional, for manual testing)
+
+## Setup
 
 ```bash
-# development
-$ pnpm run start
-
-# watch mode
-$ pnpm run start:dev
-
-# production mode
-$ pnpm run start:prod
+pnpm install
+cp .env.example .env
+docker compose up -d
+pnpm db:migrate
 ```
 
-## Run tests
+Fill in `.env`:
+
+| Variable | Value |
+|---|---|
+| `DATABASE_URL` | Keep the default if you use `docker-compose.yml` |
+| `JWT_SECRET` | Any random string, at least 32 characters (`openssl rand -hex 32`) |
+| `JWT_EXPIRES_IN` | Token lifetime, e.g. `1h` |
+| `PUBLIC_URL` | Your tunnel URL (see below) |
+| `STRIPE_SECRET_KEY` | Stripe Dashboard → API keys → Secret key (must start with `sk_test_`) |
+| `STRIPE_WEBHOOK_SECRET` | The webhook signing secret (`whsec_...`, see below) |
+
+The app refuses to start if any variable is missing or invalid.
+
+## Run
+
+**1. Start the tunnel** (keep it running):
 
 ```bash
-# unit tests
-$ pnpm run test
-
-# e2e tests
-$ pnpm run test:e2e
-
-# test coverage
-$ pnpm run test:cov
+cloudflared tunnel --url http://localhost:3000
 ```
 
-## Deployment
+Copy the `https://xxx.trycloudflare.com` URL it prints into `PUBLIC_URL` in `.env`.
 
-When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information.
+**2. Add the Stripe webhook** (Dashboard → Developers → Workbench → Webhooks → Add destination):
 
-If you are looking for a cloud-based platform to deploy your NestJS application, check out [Mau](https://mau.nestjs.com), our official platform for deploying NestJS applications on AWS. Mau makes deployment straightforward and fast, requiring just a few simple steps:
+- Events: `checkout.session.completed`
+- Payload style: **Snapshot**
+- Endpoint URL: `https://xxx.trycloudflare.com/v1/webhooks/stripe`
+
+Copy the signing secret into `STRIPE_WEBHOOK_SECRET`.
+
+**3. Start the API:**
 
 ```bash
-$ pnpm install -g @nestjs/mau
-$ mau deploy
+pnpm start:dev
 ```
 
-With Mau, you can deploy your application in just a few clicks, allowing you to focus on building features rather than managing infrastructure.
+> The quick tunnel URL changes every time `cloudflared` restarts. When that happens, update `PUBLIC_URL`, update the endpoint URL in Stripe, and restart the API.
 
-## Observability
+> Payment methods: the API only listens to `checkout.session.completed`. Keep Checkout on instant methods like cards. In Stripe Dashboard → Settings → Payment methods, turn off delayed methods such as bank debits, or those payments will stay `pending`.
 
-In production applications, observability is essential for understanding how your system behaves, detecting issues early, and maintaining reliable performance.
+## API
 
-[NestJS Observe](https://observe.nestjs.com) automatically instruments your NestJS application, giving you deep visibility into your system with minimal setup:
+All routes are under `/v1`. Routes need `Authorization: Bearer <token>` unless marked public.
 
-- **Distributed tracing:** Follow requests across services and understand how they flow through your system.
-- **Waterfall analysis:** Visualize request execution and identify slow operations, bottlenecks, and unexpected delays.
-- **Performance analysis:** Analyze application performance in real time and quickly pinpoint areas that need optimization.
-- **Metrics:** Track key application and infrastructure metrics to understand system health and performance trends.
-- **Logging:** Centralize and correlate logs with traces and other telemetry to make debugging easier.
-- **Error tracking:** Detect errors quickly and investigate their root causes with the surrounding context.
-- **SLA monitoring:** Track service-level objectives and identify when your application is approaching or exceeding defined thresholds.
-- **Alarms and alerts:** Set up alerts for critical errors, performance degradation, SLA violations, and other anomalies so your team can react quickly.
+| Method | Route | Auth | Description |
+|---|---|---|---|
+| POST | `/auth/register` | public | Create an account |
+| POST | `/auth/login` | public | Get an access token |
+| POST | `/invoices` | JWT | Create an invoice, returns `paymentUrl` |
+| GET | `/invoices?page=1&limit=20` | JWT | List your invoices |
+| GET | `/invoices/:id/checkout` | public | Redirect to Stripe Checkout |
+| GET | `/checkout/success` | public | Simple success message |
+| GET | `/checkout/cancel` | public | Simple cancel message |
+| POST | `/webhooks/stripe` | public | Stripe webhook (signature checked) |
 
-To add it to this project:
+Interactive docs: `http://localhost:3000/docs`
 
-```bash
-$ pnpm install @nestjs/observe
+Create invoice body:
+
+```json
+{
+  "customerEmail": "customer@example.com",
+  "description": "Website design",
+  "amountCents": 15000,
+  "currency": "usd"
+}
 ```
 
-Then follow the [setup guide](https://docs.nestjs.com/observability/overview) - it takes a single import and an app key.
+- `amountCents` is an integer in cents (`15000` = $150.00), between `50` and `99999999`.
+- `currency` is `usd`, `eur` or `gbp`.
 
-The free plan needs no payment details and covers 300,000 events a month. You can also browse the [live demo](https://www.observe-demo.nestjs.com/dashboard) first - the whole dashboard over a busy service's data, with nothing to install.
+## Try it
 
-## Resources
+1. Open the `bruno/` folder in Bruno and pick the `local` environment.
+2. Run `auth/register`, then `auth/login`. The token is saved for the next requests.
+3. Run `invoices/create invoice` and open the `paymentUrl` in a browser.
+4. Pay with the test card `4242 4242 4242 4242`, any future date, any CVC.
+5. Run `invoices/list invoices`. The invoice is now `paid`.
 
-Check out a few resources that may come in handy when working with NestJS:
+## Payment rules
 
-- Visit the [NestJS Documentation](https://docs.nestjs.com) to learn more about the framework.
-- For questions and support, please visit our [Discord channel](https://discord.gg/G7Qnnhy).
-- To dive deeper and get more hands-on experience, check out our official video [courses](https://courses.nestjs.com/).
-- Deploy your application to AWS with the help of [NestJS Mau](https://mau.nestjs.com) in just a few clicks.
-- Auto-instrument your application with [NestJS Observe](https://observe.nestjs.com). Distributed tracing, metrics, and logging made easy. Error tracking and performance monitoring for your NestJS applications.
-- Visualize your application graph and interact with the NestJS application in real-time using [NestJS Devtools](https://devtools.nestjs.com).
-- Need help with your project (part-time to full-time)? Check out our official [enterprise support](https://enterprise.nestjs.com).
-- To stay in the loop and get updates, follow us on [X](https://x.com/nestframework) and [LinkedIn](https://linkedin.com/company/nestjs).
-- Looking for a job, or have a job to offer? Check out our official [Jobs board](https://jobs.nestjs.com).
+- Only the webhook marks an invoice `paid`. The success page never does.
+- The webhook updates with `WHERE status = 'pending'`, so duplicate webhooks do nothing.
+- The amount always comes from the database, never from the URL.
+- The payment link never expires. Each open creates a new Checkout Session and expires the previous one, so only one session is open at a time.
+- Opening the link of a paid invoice returns `409`.
 
-## Support
+## Scripts
 
-Nest is an MIT-licensed open source project. It can grow thanks to the sponsors and support by the amazing backers. If you'd like to join them, please [read more here](https://docs.nestjs.com/support).
+| Command | What it does |
+|---|---|
+| `pnpm start:dev` | Run the API with reload on change |
+| `pnpm build` | Compile to `dist/` |
+| `pnpm lint` | Lint the code |
+| `pnpm db:generate` | Create a migration from schema changes |
+| `pnpm db:migrate` | Apply pending migrations |
 
-## Stay in touch
+## Project structure
 
-- Author - [Kamil Myśliwiec](https://twitter.com/kammysliwiec)
-- Website - [https://nestjs.com](https://nestjs.com/)
-- Twitter - [@nestframework](https://twitter.com/nestframework)
-
-## License
-
-Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
+```
+src/
+├── main.ts              App bootstrap (helmet, prefix, Swagger)
+├── app.module.ts        Global config, logging, validation, rate limit
+├── config/env.ts        Env vars, validated with Zod
+├── database/            Drizzle connection and tables
+└── modules/
+    ├── users/           Users repository
+    ├── auth/            Register, login, JWT guard
+    ├── invoices/        Create and list invoices
+    └── payments/        Stripe Checkout and webhook
+drizzle/                 SQL migrations
+bruno/                   Bruno requests
+```
