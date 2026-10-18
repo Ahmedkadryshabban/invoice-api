@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { and, desc, eq } from 'drizzle-orm';
+import { and, desc, eq, isNull } from 'drizzle-orm';
 import { DB, type Database } from '../../database/database.module.ts';
 import {
   invoices,
@@ -43,14 +43,23 @@ export class InvoicesRepository {
     return invoice ?? null;
   }
 
-  async setStripeSession(
+  async replaceStripeSession(
     id: string,
-    stripeSessionId: string,
+    previousSessionId: string | null,
+    nextSessionId: string,
   ): Promise<Invoice | null> {
     const [invoice] = await this.db
       .update(invoices)
-      .set({ stripeSessionId })
-      .where(and(eq(invoices.id, id), eq(invoices.status, 'pending')))
+      .set({ stripeSessionId: nextSessionId })
+      .where(
+        and(
+          eq(invoices.id, id),
+          eq(invoices.status, 'pending'),
+          previousSessionId === null
+            ? isNull(invoices.stripeSessionId)
+            : eq(invoices.stripeSessionId, previousSessionId),
+        ),
+      )
       .returning();
     return invoice ?? null;
   }

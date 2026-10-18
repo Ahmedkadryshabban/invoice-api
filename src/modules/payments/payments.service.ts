@@ -7,7 +7,10 @@ import {
   InvoiceNotFoundException,
 } from '../invoices/invoices.exceptions.ts';
 import { InvoicesRepository } from '../invoices/invoices.repository.ts';
-import { InvalidWebhookSignatureException } from './payments.exceptions.ts';
+import {
+  CheckoutInProgressException,
+  InvalidWebhookSignatureException,
+} from './payments.exceptions.ts';
 import { STRIPE } from './stripe.provider.ts';
 
 @Injectable()
@@ -24,6 +27,9 @@ export class PaymentsService {
     const invoice = await this.invoicesRepository.findById(invoiceId);
     if (!invoice) throw new InvoiceNotFoundException();
     if (invoice.status === 'paid') throw new InvoiceAlreadyPaidException();
+    if (invoice.stripeSessionId) {
+      await this.closeSession(invoice.stripeSessionId);
+    }
 
     const publicUrl = this.config.get('PUBLIC_URL', { infer: true });
     const session = await this.stripe.checkout.sessions.create({
@@ -47,12 +53,28 @@ export class PaymentsService {
       throw new Error(`Checkout session ${session.id} has no url`);
     }
 
-    const updated = await this.invoicesRepository.setStripeSession(
+    const updated = await this.invoicesRepository.replaceStripeSession(
       invoice.id,
+      invoice.stripeSessionId,
       session.id,
     );
-    if (!updated) throw new InvoiceAlreadyPaidException();
+    if (!updated) {
+      await this.stripe.checkout.sessions.expire(session.id);
+      throw new CheckoutInProgressException();
+    }
     return session.url;
+  }
+
+  private async closeSession(sessionId: string) {
+    try {
+      await this.stripe.checkout.sessions.expire(sessionId);
+    } catch (error) {
+      const session = await this.stripe.checkout.sessions.retrieve(sessionId);
+      if (session.status === 'complete') {
+        throw new CheckoutInProgressException();
+      }
+      if (session.status !== 'expired') throw error;
+    }
   }
 
   async handleWebhook(

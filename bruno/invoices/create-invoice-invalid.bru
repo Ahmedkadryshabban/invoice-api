@@ -1,0 +1,24 @@
+meta {
+  name: create invoice invalid
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{baseUrl}}/invoices
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "customerEmail": "customer@example.com",
+    "description": "Unsupported currency and too small amount",
+    "amountCents": 49,
+    "currency": "jpy"
+  }
+}
+
+assert {
+  res.status: eq 400
+}
