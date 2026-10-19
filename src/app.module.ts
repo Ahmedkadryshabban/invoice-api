@@ -8,6 +8,7 @@ import { validateEnv, type Env } from './config/env.ts';
 import { DatabaseModule } from './database/database.module.ts';
 import { AuthModule } from './modules/auth/auth.module.ts';
 import { InvoicesModule } from './modules/invoices/invoices.module.ts';
+import { MailModule } from './modules/mail/mail.module.ts';
 import { PaymentsModule } from './modules/payments/payments.module.ts';
 
 @Module({
@@ -33,6 +34,7 @@ import { PaymentsModule } from './modules/payments/payments.module.ts';
     AuthModule,
     InvoicesModule,
     PaymentsModule,
+    MailModule,
   ],
   providers: [
     { provide: APP_PIPE, useClass: ZodValidationPipe },

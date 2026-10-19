@@ -12,6 +12,7 @@ import * as schema from './schema/index.ts';
 
 export const DB = Symbol('DB');
 export type Database = PostgresJsDatabase<typeof schema> & { $client: Sql };
+export type Transaction = Parameters<Parameters<Database['transaction']>[0]>[0];
 
 @Global()
 @Module({

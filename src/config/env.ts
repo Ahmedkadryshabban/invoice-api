@@ -17,6 +17,11 @@ export const envSchema = z.object({
   PUBLIC_URL: z.url().transform((url) => url.replace(/\/+$/, '')),
   STRIPE_SECRET_KEY: z.string().startsWith('sk_test_'),
   STRIPE_WEBHOOK_SECRET: z.string().startsWith('whsec_'),
+  MAIL_SMTP_HOST: z.string().min(1),
+  MAIL_SMTP_PORT: z.coerce.number().int().positive(),
+  MAIL_SMTP_USER: z.string().min(1),
+  MAIL_SMTP_PASSWORD: z.string().min(1),
+  MAIL_FROM: z.string().min(1),
 });
 
 export type Env = z.infer<typeof envSchema>;
