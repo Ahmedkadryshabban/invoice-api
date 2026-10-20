@@ -1,6 +1,10 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { and, desc, eq, isNull } from 'drizzle-orm';
-import { DB, type Database } from '../../database/database.module.ts';
+import {
+  DB,
+  type Database,
+  type Transaction,
+} from '../../database/database.module.ts';
 import {
   invoices,
   type Invoice,
@@ -64,8 +68,12 @@ export class InvoicesRepository {
     return invoice ?? null;
   }
 
-  async markPaid(id: string, stripeSessionId: string): Promise<Invoice | null> {
-    const [invoice] = await this.db
+  async markPaid(
+    id: string,
+    stripeSessionId: string,
+    tx: Database | Transaction = this.db,
+  ): Promise<Invoice | null> {
+    const [invoice] = await tx
       .update(invoices)
       .set({ status: 'paid', paidAt: new Date(), stripeSessionId })
       .where(and(eq(invoices.id, id), eq(invoices.status, 'pending')))
