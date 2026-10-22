@@ -1,0 +1,27 @@
+meta {
+  name: import csv
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{baseUrl}}/invoices/import
+  body: multipartForm
+  auth: inherit
+}
+
+body:multipart-form {
+  file: @file(fixtures/invoices.csv)
+}
+
+assert {
+  res.status: eq 201
+  res.body.importedCount: eq 3
+  res.body.importId: isString
+}
+
+docs {
+  Imports bruno/fixtures/invoices.csv as paid invoices and queues one email per row.
+  The same file can only be imported once per user: run it again and it returns 409.
+  Change any value in the file to import it again.
+}

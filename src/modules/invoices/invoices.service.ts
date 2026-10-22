@@ -1,13 +1,36 @@
-import { Injectable } from '@nestjs/common';
+import { createHash } from 'node:crypto';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type { Env } from '../../config/env.ts';
-import type { CreateInvoiceDto, ListInvoicesDto } from './invoices.dto.ts';
+import { DB, type Database } from '../../database/database.module.ts';
+import { MailService } from '../mail/mail.service.ts';
+import {
+  parseImportFile,
+  type ImportFile,
+  type ImportRow,
+} from './invoice-import.parser.ts';
+import {
+  importInvoiceRowSchema,
+  type CreateInvoiceDto,
+  type ImportInvoiceRow,
+  type ListInvoicesDto,
+} from './invoices.dto.ts';
+import {
+  DuplicateImportException,
+  InvalidImportFileException,
+  InvalidImportRowsException,
+  type ImportRowError,
+} from './invoices.exceptions.ts';
 import { InvoicesRepository } from './invoices.repository.ts';
 
 @Injectable()
 export class InvoicesService {
+  private readonly logger = new Logger(InvoicesService.name);
+
   constructor(
+    @Inject(DB) private readonly db: Database,
     private readonly invoicesRepository: InvoicesRepository,
+    private readonly mailService: MailService,
     private readonly config: ConfigService<Env, true>,
   ) {}
 
@@ -33,4 +56,78 @@ export class InvoicesService {
     });
     return { items, page, limit, total };
   }
+
+  async importFromFile(userId: string, file: ImportFile | undefined) {
+    if (!file) {
+      throw new InvalidImportFileException(
+        'Attach the file in a form field named "file"',
+      );
+    }
+    const rows = validateRows(parseImportFile(file));
+    const fileSha256 = createHash('sha256').update(file.buffer).digest('hex');
+    const importedAt = new Date();
+
+    const { importId, invoices } = await this.db.transaction(async (tx) => {
+      const invoiceImport = await this.invoicesRepository.createImport(
+        { userId, fileSha256, rowCount: rows.length },
+        tx,
+      );
+      if (!invoiceImport) throw new DuplicateImportException();
+
+      const created = await this.invoicesRepository.createMany(
+        rows.map((row) => ({
+          userId,
+          importId: invoiceImport.id,
+          customerEmail: row.customerEmail,
+          description: row.description,
+          amountCents: row.amountCents,
+          currency: row.currency,
+          status: 'paid' as const,
+          paidAt: row.paidAt ?? importedAt,
+        })),
+        tx,
+      );
+      await this.mailService.enqueue(
+        created.map((invoice) => ({
+          to: invoice.customerEmail,
+          dedupeKey: `invoice-imported:${invoice.id}`,
+          template: 'invoice_imported' as const,
+          data: {
+            description: invoice.description,
+            amountCents: invoice.amountCents,
+            currency: invoice.currency,
+            paidAt: invoice.paidAt ?? importedAt,
+          },
+        })),
+        tx,
+      );
+      return { importId: invoiceImport.id, invoices: created };
+    });
+
+    this.logger.log(
+      `Import ${importId} created ${invoices.length} paid invoices for user ${userId}`,
+    );
+    return { importId, importedCount: invoices.length };
+  }
+}
+
+function validateRows(rows: ImportRow[]): ImportInvoiceRow[] {
+  const valid: ImportInvoiceRow[] = [];
+  const errors: ImportRowError[] = [];
+  for (const { row, values } of rows) {
+    const result = importInvoiceRowSchema.safeParse(values);
+    if (result.success) {
+      valid.push(result.data);
+      continue;
+    }
+    for (const issue of result.error.issues) {
+      errors.push({
+        row,
+        field: String(issue.path[0] ?? ''),
+        message: issue.message,
+      });
+    }
+  }
+  if (errors.length > 0) throw new InvalidImportRowsException(errors);
+  return valid;
 }

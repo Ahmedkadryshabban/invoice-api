@@ -29,6 +29,13 @@
       "when": 1792407122469,
       "tag": "0003_create_email_outbox",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1792571027974,
+      "tag": "0004_create_invoice_imports",
+      "breakpoints": true
     }
   ]
 }

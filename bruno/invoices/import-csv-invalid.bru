@@ -1,0 +1,25 @@
+meta {
+  name: import csv invalid
+  type: http
+  seq: 6
+}
+
+post {
+  url: {{baseUrl}}/invoices/import
+  body: multipartForm
+  auth: inherit
+}
+
+body:multipart-form {
+  file: @file(fixtures/invoices-invalid.csv)
+}
+
+assert {
+  res.status: eq 400
+  res.body.errors: isArray
+}
+
+docs {
+  Every row in bruno/fixtures/invoices-invalid.csv breaks a rule (email, amount, currency, future paidAt).
+  The whole file is rejected and the response lists each bad row and field.
+}

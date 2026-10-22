@@ -6,9 +6,12 @@ import {
   type Transaction,
 } from '../../database/database.module.ts';
 import {
+  invoiceImports,
   invoices,
   type Invoice,
+  type InvoiceImport,
   type NewInvoice,
+  type NewInvoiceImport,
 } from '../../database/schema/index.ts';
 
 @Injectable()
@@ -18,6 +21,27 @@ export class InvoicesRepository {
   async create(data: NewInvoice): Promise<Invoice> {
     const [invoice] = await this.db.insert(invoices).values(data).returning();
     return invoice;
+  }
+
+  async createMany(
+    data: NewInvoice[],
+    tx: Database | Transaction = this.db,
+  ): Promise<Invoice[]> {
+    return tx.insert(invoices).values(data).returning();
+  }
+
+  async createImport(
+    data: NewInvoiceImport,
+    tx: Database | Transaction = this.db,
+  ): Promise<InvoiceImport | null> {
+    const [invoiceImport] = await tx
+      .insert(invoiceImports)
+      .values(data)
+      .onConflictDoNothing({
+        target: [invoiceImports.userId, invoiceImports.fileSha256],
+      })
+      .returning();
+    return invoiceImport ?? null;
   }
 
   async listByUser(

@@ -9,6 +9,7 @@ import {
   uuid,
 } from 'drizzle-orm/pg-core';
 import { timestamps } from './columns.ts';
+import { invoiceImports } from './invoice-imports.table.ts';
 import { users } from './users.table.ts';
 
 export const invoices = pgTable(
@@ -27,10 +28,12 @@ export const invoices = pgTable(
       .default('pending'),
     stripeSessionId: text(),
     paidAt: timestamp({ withTimezone: true }),
+    importId: uuid().references(() => invoiceImports.id),
     ...timestamps,
   },
   (t) => [
     index('invoices_user_id_idx').on(t.userId),
+    index('invoices_import_id_idx').on(t.importId),
     check('invoices_status_check', sql`${t.status} in ('pending', 'paid')`),
   ],
 );
