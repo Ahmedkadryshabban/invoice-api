@@ -36,6 +36,13 @@
       "when": 1792571027974,
       "tag": "0004_create_invoice_imports",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1792660287945,
+      "tag": "0005_add_import_completed_email",
+      "breakpoints": true
     }
   ]
 }

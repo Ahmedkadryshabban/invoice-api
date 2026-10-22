@@ -14,7 +14,15 @@ export type EmailMessage =
       template: 'checkout_expired';
       data: InvoiceDetails & { paymentUrl: string };
     }
-  | { template: 'invoice_imported'; data: InvoiceDetails & { paidAt: Date } };
+  | {
+      template: 'import_completed';
+      data: {
+        fileName: string;
+        importedCount: number;
+        totals: { currency: string; amountCents: number }[];
+        invoices: (InvoiceDetails & { customerEmail: string })[];
+      };
+    };
 
 export type RenderedEmail = { subject: string; text: string; html: string };
 
@@ -49,11 +57,25 @@ export function renderEmail(message: EmailMessage): RenderedEmail {
         data.paymentUrl,
       );
     }
-    case 'invoice_imported': {
+    case 'import_completed': {
       const { data } = message;
-      return build(`Invoice recorded as paid: ${data.description}`, [
-        `Your invoice "${data.description}" for ${formatMoney(data)} was recorded as paid on ${formatDate(data.paidAt)}.`,
-      ]);
+      const paragraphs = [
+        `Your file "${data.fileName}" was imported. ${data.importedCount} invoices were recorded as paid.`,
+        `Total: ${data.totals.map(formatMoney).join(', ')}`,
+        ...data.invoices
+          .slice(0, 10)
+          .map(
+            (invoice) =>
+              `${invoice.customerEmail}: ${invoice.description} (${formatMoney(invoice)})`,
+          ),
+      ];
+      if (data.invoices.length > 10) {
+        paragraphs.push(`...and ${data.invoices.length - 10} more.`);
+      }
+      return build(
+        `Import completed: ${data.importedCount} invoices recorded as paid`,
+        paragraphs,
+      );
     }
   }
 }
@@ -76,7 +98,10 @@ function build(
   };
 }
 
-function formatMoney({ amountCents, currency }: InvoiceDetails): string {
+function formatMoney({
+  amountCents,
+  currency,
+}: Pick<InvoiceDetails, 'amountCents' | 'currency'>): string {
   return new Intl.NumberFormat('en', {
     style: 'currency',
     currency: currency.toUpperCase(),

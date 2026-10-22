@@ -1,5 +1,6 @@
 import { extname } from 'node:path';
 import { parse } from 'csv-parse/sync';
+import { readSheet } from 'read-excel-file/node';
 import { IMPORT_COLUMNS } from './invoices.dto.ts';
 import { InvalidImportFileException } from './invoices.exceptions.ts';
 
@@ -12,12 +13,17 @@ const REQUIRED_COLUMNS = IMPORT_COLUMNS.filter((column) => column !== 'paidAt');
 export type ImportFile = { originalname: string; buffer: Buffer };
 export type ImportRow = { row: number; values: Record<string, string> };
 
-export function parseImportFile(file: ImportFile): ImportRow[] {
+export async function parseImportFile(file: ImportFile): Promise<ImportRow[]> {
   const extension = extname(file.originalname).toLowerCase();
-  if (extension !== '.csv') {
-    throw new InvalidImportFileException('Only .csv files are supported');
+  if (extension === '.csv') {
+    return toRows(readCsv(file.buffer));
   }
-  return toRows(readCsv(file.buffer));
+  if (extension === '.xlsx') {
+    return toRows(await readExcel(file.buffer));
+  }
+  throw new InvalidImportFileException(
+    'Only .csv and .xlsx files are supported',
+  );
 }
 
 function readCsv(buffer: Buffer): string[][] {
@@ -28,6 +34,27 @@ function readCsv(buffer: Buffer): string[][] {
       error instanceof Error ? error.message : 'Could not read the CSV file',
     );
   }
+}
+
+async function readExcel(buffer: Buffer): Promise<string[][]> {
+  try {
+    const rows = await readSheet(buffer);
+    return rows
+      .map((row) => row.map(cellToString))
+      .filter((row) => row.some((cell) => cell !== ''));
+  } catch {
+    throw new InvalidImportFileException('Could not read the Excel file');
+  }
+}
+
+function cellToString(cell: unknown): string {
+  if (cell === null || cell === undefined) return '';
+  if (cell instanceof Date) return cell.toISOString();
+  if (typeof cell === 'string') return cell.trim();
+  if (typeof cell === 'number' || typeof cell === 'boolean') {
+    return String(cell);
+  }
+  return '';
 }
 
 function toRows(table: string[][]): ImportRow[] {

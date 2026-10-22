@@ -4,6 +4,7 @@ import { ConfigService } from '@nestjs/config';
 import type { Env } from '../../config/env.ts';
 import { DB, type Database } from '../../database/database.module.ts';
 import { MailService } from '../mail/mail.service.ts';
+import { UsersRepository } from '../users/users.repository.ts';
 import {
   parseImportFile,
   type ImportFile,
@@ -31,6 +32,7 @@ export class InvoicesService {
     @Inject(DB) private readonly db: Database,
     private readonly invoicesRepository: InvoicesRepository,
     private readonly mailService: MailService,
+    private readonly usersRepository: UsersRepository,
     private readonly config: ConfigService<Env, true>,
   ) {}
 
@@ -63,9 +65,10 @@ export class InvoicesService {
         'Attach the file in a form field named "file"',
       );
     }
-    const rows = validateRows(parseImportFile(file));
+    const rows = validateRows(await parseImportFile(file));
     const fileSha256 = createHash('sha256').update(file.buffer).digest('hex');
     const importedAt = new Date();
+    const uploader = await this.usersRepository.findById(userId);
 
     const { importId, invoices } = await this.db.transaction(async (tx) => {
       const invoiceImport = await this.invoicesRepository.createImport(
@@ -87,20 +90,47 @@ export class InvoicesService {
         })),
         tx,
       );
-      await this.mailService.enqueue(
-        created.map((invoice) => ({
-          to: invoice.customerEmail,
-          dedupeKey: `invoice-imported:${invoice.id}`,
-          template: 'invoice_imported' as const,
-          data: {
-            description: invoice.description,
-            amountCents: invoice.amountCents,
-            currency: invoice.currency,
-            paidAt: invoice.paidAt ?? importedAt,
-          },
-        })),
-        tx,
-      );
+      if (uploader) {
+        const totals: { currency: string; amountCents: number }[] = [];
+        for (const invoice of created) {
+          const total = totals.find(
+            (entry) => entry.currency === invoice.currency,
+          );
+          if (total) {
+            total.amountCents += invoice.amountCents;
+          } else {
+            totals.push({
+              currency: invoice.currency,
+              amountCents: invoice.amountCents,
+            });
+          }
+        }
+        await this.mailService.enqueue(
+          [
+            {
+              to: uploader.email,
+              dedupeKey: `import-completed:${invoiceImport.id}`,
+              template: 'import_completed' as const,
+              data: {
+                fileName: file.originalname,
+                importedCount: created.length,
+                totals,
+                invoices: created.map((invoice) => ({
+                  customerEmail: invoice.customerEmail,
+                  description: invoice.description,
+                  amountCents: invoice.amountCents,
+                  currency: invoice.currency,
+                })),
+              },
+            },
+          ],
+          tx,
+        );
+      } else {
+        this.logger.warn(
+          `Import ${invoiceImport.id} has no uploader, skipping summary email`,
+        );
+      }
       return { importId: invoiceImport.id, invoices: created };
     });
 

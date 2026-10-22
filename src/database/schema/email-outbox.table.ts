@@ -23,6 +23,7 @@ export const emailOutbox = pgTable(
         'payment_failed',
         'checkout_expired',
         'invoice_imported',
+        'import_completed',
       ],
     }).notNull(),
     subject: text().notNull(),
@@ -44,7 +45,7 @@ export const emailOutbox = pgTable(
       .where(sql`${t.status} = 'pending'`),
     check(
       'email_outbox_template_check',
-      sql`${t.template} in ('invoice_paid', 'payment_failed', 'checkout_expired', 'invoice_imported')`,
+      sql`${t.template} in ('invoice_paid', 'payment_failed', 'checkout_expired', 'invoice_imported', 'import_completed')`,
     ),
     check(
       'email_outbox_status_check',
