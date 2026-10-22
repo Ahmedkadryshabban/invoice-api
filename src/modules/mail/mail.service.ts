@@ -11,6 +11,7 @@ const BATCH_SIZE = 10;
 const LEASE_SECONDS = 300;
 const MAX_ATTEMPTS = 5;
 const RETRY_BASE_SECONDS = 60;
+const RATE_LIMIT_PAUSE_SECONDS = 10;
 
 export type QueuedEmail = EmailMessage & { to: string; dedupeKey: string };
 
@@ -44,12 +45,25 @@ export class MailService {
       BATCH_SIZE,
       LEASE_SECONDS,
     );
-    for (const email of emails) {
-      await this.send(email);
+    for (const [index, email] of emails.entries()) {
+      const result = await this.send(email);
+      if (result === 'throttled') {
+        const waiting = emails.slice(index).map((queued) => queued.id);
+        await this.mailRepository.releaseClaims(
+          waiting,
+          RATE_LIMIT_PAUSE_SECONDS,
+        );
+        this.logger.warn(
+          `SMTP server is rate limiting, ${waiting.length} email(s) wait ${RATE_LIMIT_PAUSE_SECONDS}s`,
+        );
+        return;
+      }
     }
   }
 
-  private async send(email: EmailOutbox): Promise<void> {
+  private async send(
+    email: EmailOutbox,
+  ): Promise<'sent' | 'failed' | 'throttled'> {
     try {
       await this.mailer.sendMail({
         from: this.config.get('MAIL_FROM', { infer: true }),
@@ -59,11 +73,13 @@ export class MailService {
         html: email.bodyHtml,
       });
     } catch (error) {
+      if (isRateLimited(error)) return 'throttled';
       await this.handleFailure(email, error);
-      return;
+      return 'failed';
     }
     await this.mailRepository.markSent(email.id);
     this.logger.log(`Email ${email.id} (${email.template}) sent`);
+    return 'sent';
   }
 
   private async handleFailure(email: EmailOutbox, error: unknown) {
@@ -83,6 +99,15 @@ export class MailService {
       `Email ${email.id} (${email.template}) attempt ${email.attempts} failed (${code}), retrying in ${delaySeconds}s`,
     );
   }
+}
+
+function isRateLimited(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : '';
+  const responseCode =
+    typeof error === 'object' && error !== null && 'responseCode' in error
+      ? Number(error.responseCode)
+      : undefined;
+  return responseCode === 421 || /too many/i.test(message);
 }
 
 function errorCode(error: unknown): string {

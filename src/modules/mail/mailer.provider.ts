@@ -13,6 +13,9 @@ function createMailer(config: ConfigService<Env, true>) {
     host: config.get('MAIL_SMTP_HOST', { infer: true }),
     port,
     secure: port === 465,
+    connectionTimeout: 10_000,
+    greetingTimeout: 10_000,
+    socketTimeout: 30_000,
     auth: {
       user: config.get('MAIL_SMTP_USER', { infer: true }),
       pass: config.get('MAIL_SMTP_PASSWORD', { infer: true }),

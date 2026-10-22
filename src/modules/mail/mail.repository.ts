@@ -71,6 +71,17 @@ export class MailRepository {
       .where(eq(emailOutbox.id, id));
   }
 
+  async releaseClaims(ids: string[], delaySeconds: number): Promise<void> {
+    if (ids.length === 0) return;
+    await this.db
+      .update(emailOutbox)
+      .set({
+        attempts: sql`${emailOutbox.attempts} - 1`,
+        nextAttemptAt: sql`now() + make_interval(secs => ${delaySeconds})`,
+      })
+      .where(inArray(emailOutbox.id, ids));
+  }
+
   async markFailed(id: string, error: string): Promise<void> {
     await this.db
       .update(emailOutbox)
