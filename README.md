@@ -149,7 +149,7 @@ Responses:
 | Status | When |
 |---|---|
 | `201` | All rows valid. Returns `{ "importId": "...", "importedCount": 2 }` |
-| `400` | Missing file, wrong type, bad header, too many rows, or any invalid row. The body lists every bad row and field. Nothing is saved. |
+| `400` | Missing file, wrong type, bad header, too many rows, or any invalid row. The body lists every bad row and field, with rows numbered as in a spreadsheet (the header is row 1). Nothing is saved. |
 | `409` | You already imported this exact file |
 | `413` | File larger than 1 MB |
 
@@ -177,7 +177,7 @@ Every imported invoice is saved as `paid`. Customers get no email, because they 
 
 - Emails are written to the `email_outbox` table in the same transaction as the change that causes them, so a failed send never loses one.
 - A worker sends due emails every 5 seconds. A failed send is retried after 1, 2, 4 and 8 minutes, then marked `failed`.
-- When the SMTP server says it is rate limited, the worker waits 10 seconds without counting it as a failed attempt. Mailtrap's free sandbox accepts about one email every 15 seconds, so large imports take a while to finish sending.
+- When the SMTP server says it is rate limited, the worker waits 10 seconds without counting it as a failed attempt. Mailtrap's free sandbox accepts about one email every 15 seconds, so when several emails are queued at once they go out one at a time.
 - Each email has a unique key, so webhook retries never send it twice.
 
 | Email | Sent when |
