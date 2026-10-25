@@ -43,6 +43,13 @@
       "when": 1792660287945,
       "tag": "0005_add_import_completed_email",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1792938334347,
+      "tag": "0006_drop_invoice_imported_email",
+      "breakpoints": true
     }
   ]
 }
