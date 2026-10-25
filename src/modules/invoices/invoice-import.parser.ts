@@ -1,5 +1,5 @@
 import { extname } from 'node:path';
-import { parse } from 'csv-parse/sync';
+import { parse, type Info } from 'csv-parse/sync';
 import { readSheet } from 'read-excel-file/node';
 import { IMPORT_COLUMNS } from './invoices.dto.ts';
 import { InvalidImportFileException } from './invoices.exceptions.ts';
@@ -12,6 +12,9 @@ const REQUIRED_COLUMNS = IMPORT_COLUMNS.filter((column) => column !== 'paidAt');
 
 export type ImportFile = { originalname: string; buffer: Buffer };
 export type ImportRow = { row: number; values: Record<string, string> };
+
+type SheetRow = { row: number; cells: string[] };
+type CsvRecord = { record: string[]; info: Info };
 
 export async function parseImportFile(file: ImportFile): Promise<ImportRow[]> {
   const extension = extname(file.originalname).toLowerCase();
@@ -26,9 +29,18 @@ export async function parseImportFile(file: ImportFile): Promise<ImportRow[]> {
   );
 }
 
-function readCsv(buffer: Buffer): string[][] {
+function readCsv(buffer: Buffer): SheetRow[] {
   try {
-    return parse(buffer, { bom: true, trim: true, skip_empty_lines: true });
+    const records = parse(buffer, {
+      bom: true,
+      trim: true,
+      skip_empty_lines: true,
+      info: true,
+    }) as unknown as CsvRecord[];
+    return records.map(({ record, info }) => ({
+      row: info.records + info.empty_lines,
+      cells: record,
+    }));
   } catch (error) {
     throw new InvalidImportFileException(
       error instanceof Error ? error.message : 'Could not read the CSV file',
@@ -36,12 +48,15 @@ function readCsv(buffer: Buffer): string[][] {
   }
 }
 
-async function readExcel(buffer: Buffer): Promise<string[][]> {
+async function readExcel(buffer: Buffer): Promise<SheetRow[]> {
   try {
     const rows = await readSheet(buffer);
     return rows
-      .map((row) => row.map(cellToString))
-      .filter((row) => row.some((cell) => cell !== ''));
+      .map((cells, index) => ({
+        row: index + 1,
+        cells: cells.map(cellToString),
+      }))
+      .filter(({ cells }) => cells.some((cell) => cell !== ''));
   } catch {
     throw new InvalidImportFileException('Could not read the Excel file');
   }
@@ -57,9 +72,10 @@ function cellToString(cell: unknown): string {
   return '';
 }
 
-function toRows(table: string[][]): ImportRow[] {
-  const [header, ...records] = table;
-  if (!header) throw new InvalidImportFileException('The file is empty');
+function toRows(table: SheetRow[]): ImportRow[] {
+  const [first, ...records] = table;
+  if (!first) throw new InvalidImportFileException('The file is empty');
+  const header = first.cells;
 
   const missing = REQUIRED_COLUMNS.filter((column) => !header.includes(column));
   if (missing.length > 0) {
@@ -85,10 +101,10 @@ function toRows(table: string[][]): ImportRow[] {
     );
   }
 
-  return records.map((record, index) => ({
-    row: index + 2,
+  return records.map(({ row, cells }) => ({
+    row,
     values: Object.fromEntries(
-      header.map((column, position) => [column, record[position] ?? '']),
+      header.map((column, position) => [column, cells[position] ?? '']),
     ),
   }));
 }
