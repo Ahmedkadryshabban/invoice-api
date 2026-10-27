@@ -1,11 +1,13 @@
 import { createHash } from 'node:crypto';
+import { InjectQueue } from '@nestjs/bullmq';
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import type { Queue } from 'bullmq';
 import type { Env } from '../../config/env.ts';
 import { DB, type Database } from '../../database/database.module.ts';
 import { MailService } from '../mail/mail.service.ts';
-import { UsersRepository } from '../users/users.repository.ts';
 import {
+  checkImportFileType,
   parseImportFile,
   type ImportFile,
   type ImportRow,
@@ -14,15 +16,23 @@ import {
   importInvoiceRowSchema,
   type CreateInvoiceDto,
   type ImportInvoiceRow,
+  type ImportRowError,
   type ListInvoicesDto,
 } from './invoices.dto.ts';
 import {
   DuplicateImportException,
+  ImportNotFoundException,
   InvalidImportFileException,
-  InvalidImportRowsException,
-  type ImportRowError,
 } from './invoices.exceptions.ts';
+import {
+  INVOICE_IMPORT_QUEUE,
+  PROCESS_IMPORT_JOB,
+  type ImportJob,
+} from './invoices.queues.ts';
 import { InvoicesRepository } from './invoices.repository.ts';
+
+const MAX_REPORTED_ROW_ERRORS = 100;
+const IMPORT_CHUNK_SIZE = 1000;
 
 @Injectable()
 export class InvoicesService {
@@ -32,8 +42,9 @@ export class InvoicesService {
     @Inject(DB) private readonly db: Database,
     private readonly invoicesRepository: InvoicesRepository,
     private readonly mailService: MailService,
-    private readonly usersRepository: UsersRepository,
     private readonly config: ConfigService<Env, true>,
+    @InjectQueue(INVOICE_IMPORT_QUEUE)
+    private readonly importQueue: Queue<ImportJob>,
   ) {}
 
   async create(userId: string, dto: CreateInvoiceDto) {
@@ -65,83 +76,150 @@ export class InvoicesService {
         'Attach the file in a form field named "file"',
       );
     }
-    const rows = validateRows(await parseImportFile(file));
+    checkImportFileType(file.originalname);
     const fileSha256 = createHash('sha256').update(file.buffer).digest('hex');
-    const importedAt = new Date();
-    const uploader = await this.usersRepository.findById(userId);
 
-    const { importId, invoices } = await this.db.transaction(async (tx) => {
-      const invoiceImport = await this.invoicesRepository.createImport(
-        { userId, fileSha256, rowCount: rows.length },
-        tx,
-      );
-      if (!invoiceImport) throw new DuplicateImportException();
+    const invoiceImport = await this.invoicesRepository.createImport({
+      userId,
+      fileName: file.originalname,
+      fileSha256,
+      file: file.buffer,
+    });
+    if (!invoiceImport) throw new DuplicateImportException();
 
-      const created = await this.invoicesRepository.createMany(
-        rows.map((row) => ({
-          userId,
-          importId: invoiceImport.id,
-          customerEmail: row.customerEmail,
-          description: row.description,
-          amountCents: row.amountCents,
-          currency: row.currency,
-          status: 'paid' as const,
-          paidAt: row.paidAt ?? importedAt,
-        })),
-        tx,
+    try {
+      await this.importQueue.add(
+        PROCESS_IMPORT_JOB,
+        { importId: invoiceImport.id },
+        { jobId: invoiceImport.id },
       );
-      if (uploader) {
-        const totals: { currency: string; amountCents: number }[] = [];
-        for (const invoice of created) {
-          const total = totals.find(
-            (entry) => entry.currency === invoice.currency,
-          );
-          if (total) {
-            total.amountCents += invoice.amountCents;
-          } else {
-            totals.push({
-              currency: invoice.currency,
-              amountCents: invoice.amountCents,
-            });
-          }
-        }
-        await this.mailService.enqueue(
-          [
-            {
-              to: uploader.email,
-              dedupeKey: `import-completed:${invoiceImport.id}`,
-              template: 'import_completed' as const,
-              data: {
-                fileName: file.originalname,
-                importedCount: created.length,
-                totals,
-                invoices: created.map((invoice) => ({
-                  customerEmail: invoice.customerEmail,
-                  description: invoice.description,
-                  amountCents: invoice.amountCents,
-                  currency: invoice.currency,
-                })),
-              },
-            },
-          ],
+    } catch (error) {
+      await this.invoicesRepository.failImport(
+        invoiceImport.id,
+        'The import could not be queued, upload the file again',
+      );
+      throw error;
+    }
+
+    this.logger.log(`Import ${invoiceImport.id} queued for user ${userId}`);
+    return { importId: invoiceImport.id, status: invoiceImport.status };
+  }
+
+  async findImport(userId: string, importId: string) {
+    const invoiceImport = await this.invoicesRepository.findImport(
+      importId,
+      userId,
+    );
+    if (!invoiceImport) throw new ImportNotFoundException();
+    return {
+      importId: invoiceImport.id,
+      fileName: invoiceImport.fileName,
+      status: invoiceImport.status,
+      rowCount: invoiceImport.rowCount,
+      importedCount:
+        invoiceImport.status === 'completed'
+          ? (invoiceImport.rowCount ?? 0)
+          : 0,
+      error: invoiceImport.error,
+      errors: invoiceImport.errors ?? [],
+      createdAt: invoiceImport.createdAt,
+      completedAt: invoiceImport.completedAt,
+    };
+  }
+
+  async processImport(importId: string): Promise<void> {
+    const invoiceImport = await this.invoicesRepository.startImport(importId);
+    if (!invoiceImport?.file || !invoiceImport.fileName) return;
+
+    let rows: ImportRow[];
+    try {
+      rows = await parseImportFile({
+        originalname: invoiceImport.fileName,
+        buffer: invoiceImport.file,
+      });
+    } catch (error) {
+      if (!(error instanceof InvalidImportFileException)) throw error;
+      await this.invoicesRepository.failImport(importId, error.message);
+      this.logger.warn(`Import ${importId} failed: ${error.message}`);
+      return;
+    }
+
+    const { valid, errors } = validateRows(rows);
+    if (errors.length > 0) {
+      const invalidRows = new Set(errors.map((error) => error.row)).size;
+      await this.invoicesRepository.failImport(
+        importId,
+        `${invalidRows} row(s) have invalid values, nothing was imported`,
+        errors.slice(0, MAX_REPORTED_ROW_ERRORS),
+        rows.length,
+      );
+      this.logger.warn(
+        `Import ${importId} failed: ${invalidRows} invalid rows`,
+      );
+      return;
+    }
+
+    const { userId, createdAt: uploadedAt } = invoiceImport;
+    await this.db.transaction(async (tx) => {
+      for (let start = 0; start < valid.length; start += IMPORT_CHUNK_SIZE) {
+        const created = await this.invoicesRepository.createMany(
+          valid.slice(start, start + IMPORT_CHUNK_SIZE).map((row) => ({
+            userId,
+            importId,
+            customerEmail: row.customerEmail,
+            description: row.description,
+            amountCents: row.amountCents,
+            currency: row.currency,
+            status: 'paid' as const,
+            paidAt: row.paidAt ?? uploadedAt,
+          })),
           tx,
         );
-      } else {
-        this.logger.warn(
-          `Import ${invoiceImport.id} has no uploader, skipping summary email`,
+        await this.mailService.enqueue(
+          created.map((invoice) => ({
+            to: invoice.customerEmail,
+            dedupeKey: `invoice-paid:${invoice.id}`,
+            template: 'invoice_paid' as const,
+            data: {
+              description: invoice.description,
+              amountCents: invoice.amountCents,
+              currency: invoice.currency,
+              paidAt: invoice.paidAt ?? uploadedAt,
+            },
+          })),
+          tx,
         );
       }
-      return { importId: invoiceImport.id, invoices: created };
+      await this.invoicesRepository.completeImport(importId, valid.length, tx);
     });
 
     this.logger.log(
-      `Import ${importId} created ${invoices.length} paid invoices for user ${userId}`,
+      `Import ${importId} created ${valid.length} paid invoices for user ${userId} and queued ${valid.length} customer emails`,
     );
-    return { importId, importedCount: invoices.length };
+  }
+
+  async failImport(importId: string, error: string): Promise<void> {
+    await this.invoicesRepository.failImport(importId, error);
+  }
+
+  async requeueUnfinishedImports(): Promise<void> {
+    const importIds = await this.invoicesRepository.findUnfinishedImportIds();
+    if (importIds.length === 0) return;
+    await this.importQueue.addBulk(
+      importIds.map((importId) => ({
+        name: PROCESS_IMPORT_JOB,
+        data: { importId },
+        opts: { jobId: importId },
+      })),
+    );
+    this.logger.log(`${importIds.length} unfinished import(s) queued again`);
   }
 }
 
-function validateRows(rows: ImportRow[]): ImportInvoiceRow[] {
+function validateRows(rows: ImportRow[]): {
+  valid: ImportInvoiceRow[];
+  errors: ImportRowError[];
+} {
   const valid: ImportInvoiceRow[] = [];
   const errors: ImportRowError[] = [];
   for (const { row, values } of rows) {
@@ -158,6 +236,5 @@ function validateRows(rows: ImportRow[]): ImportInvoiceRow[] {
       });
     }
   }
-  if (errors.length > 0) throw new InvalidImportRowsException(errors);
-  return valid;
+  return { valid, errors };
 }

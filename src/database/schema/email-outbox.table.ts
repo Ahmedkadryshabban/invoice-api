@@ -18,12 +18,7 @@ export const emailOutbox = pgTable(
     dedupeKey: text().notNull(),
     toEmail: text().notNull(),
     template: text({
-      enum: [
-        'invoice_paid',
-        'payment_failed',
-        'checkout_expired',
-        'import_completed',
-      ],
+      enum: ['invoice_paid', 'payment_failed', 'checkout_expired'],
     }).notNull(),
     subject: text().notNull(),
     bodyText: text().notNull(),
@@ -44,7 +39,7 @@ export const emailOutbox = pgTable(
       .where(sql`${t.status} = 'pending'`),
     check(
       'email_outbox_template_check',
-      sql`${t.template} in ('invoice_paid', 'payment_failed', 'checkout_expired', 'import_completed')`,
+      sql`${t.template} in ('invoice_paid', 'payment_failed', 'checkout_expired')`,
     ),
     check(
       'email_outbox_status_check',

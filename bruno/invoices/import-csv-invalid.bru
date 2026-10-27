@@ -15,14 +15,17 @@ body:multipart-form {
 }
 
 assert {
-  res.status: eq 400
-  res.body.errors: isArray
-  res.body.errors[0].row: eq 2
-  res.body.errors[3].row: eq 5
+  res.status: eq 202
+  res.body.importId: isString
+  res.body.status: eq pending
+}
+
+script:post-response {
+  bru.setVar("importId", res.body.importId);
 }
 
 docs {
   Every row in bruno/fixtures/invoices-invalid.csv breaks a rule (email, amount, currency, future paidAt).
-  The whole file is rejected and the response lists each bad row and field.
+  The upload is accepted with 202. Run "import status": it says failed, nothing was imported, and errors lists each bad row and field.
   Line 3 of the file is blank, so the errors point at rows 2, 4 and 5, the same numbers you see in a spreadsheet.
 }

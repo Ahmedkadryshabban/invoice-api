@@ -2,6 +2,10 @@ import {
   Body,
   Controller,
   Get,
+  HttpCode,
+  HttpStatus,
+  Param,
+  ParseUUIDPipe,
   Post,
   Query,
   UploadedFile,
@@ -34,6 +38,7 @@ export class InvoicesController {
   }
 
   @Post('import')
+  @HttpCode(HttpStatus.ACCEPTED)
   @UseInterceptors(
     FileInterceptor('file', {
       limits: { fileSize: MAX_IMPORT_FILE_BYTES, files: 1 },
@@ -52,5 +57,13 @@ export class InvoicesController {
     @UploadedFile() file: ImportFile | undefined,
   ) {
     return this.invoicesService.importFromFile(user.sub, file);
+  }
+
+  @Get('imports/:id')
+  findImport(
+    @CurrentUser() user: JwtPayload,
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
+    return this.invoicesService.findImport(user.sub, id);
   }
 }

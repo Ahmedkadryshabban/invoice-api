@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { and, desc, eq, isNull } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNull, ne, sql } from 'drizzle-orm';
 import {
   DB,
   type Database,
@@ -14,6 +14,8 @@ import {
   type NewInvoiceImport,
 } from '../../database/schema/index.ts';
 
+const INSERT_CHUNK_SIZE = 1000;
+
 @Injectable()
 export class InvoicesRepository {
   constructor(@Inject(DB) private readonly db: Database) {}
@@ -27,21 +29,124 @@ export class InvoicesRepository {
     data: NewInvoice[],
     tx: Database | Transaction = this.db,
   ): Promise<Invoice[]> {
-    return tx.insert(invoices).values(data).returning();
+    const created: Invoice[] = [];
+    for (let start = 0; start < data.length; start += INSERT_CHUNK_SIZE) {
+      const chunk = await tx
+        .insert(invoices)
+        .values(data.slice(start, start + INSERT_CHUNK_SIZE))
+        .returning();
+      created.push(...chunk);
+    }
+    return created;
   }
 
   async createImport(
     data: NewInvoiceImport,
-    tx: Database | Transaction = this.db,
-  ): Promise<InvoiceImport | null> {
-    const [invoiceImport] = await tx
+  ): Promise<Pick<InvoiceImport, 'id' | 'status'> | null> {
+    const [invoiceImport] = await this.db
       .insert(invoiceImports)
       .values(data)
       .onConflictDoNothing({
         target: [invoiceImports.userId, invoiceImports.fileSha256],
+        where: sql`${invoiceImports.status} <> 'failed'`,
       })
-      .returning();
+      .returning({ id: invoiceImports.id, status: invoiceImports.status });
     return invoiceImport ?? null;
+  }
+
+  async startImport(
+    id: string,
+  ): Promise<Pick<
+    InvoiceImport,
+    'userId' | 'fileName' | 'file' | 'createdAt'
+  > | null> {
+    const [invoiceImport] = await this.db
+      .update(invoiceImports)
+      .set({ status: 'processing' })
+      .where(
+        and(
+          eq(invoiceImports.id, id),
+          inArray(invoiceImports.status, ['pending', 'processing']),
+        ),
+      )
+      .returning({
+        userId: invoiceImports.userId,
+        fileName: invoiceImports.fileName,
+        file: invoiceImports.file,
+        createdAt: invoiceImports.createdAt,
+      });
+    return invoiceImport ?? null;
+  }
+
+  async completeImport(
+    id: string,
+    rowCount: number,
+    tx: Database | Transaction = this.db,
+  ): Promise<void> {
+    await tx
+      .update(invoiceImports)
+      .set({
+        status: 'completed',
+        rowCount,
+        file: null,
+        error: null,
+        errors: null,
+        completedAt: new Date(),
+      })
+      .where(eq(invoiceImports.id, id));
+  }
+
+  async failImport(
+    id: string,
+    error: string,
+    errors: InvoiceImport['errors'] = null,
+    rowCount: number | null = null,
+  ): Promise<void> {
+    await this.db
+      .update(invoiceImports)
+      .set({
+        status: 'failed',
+        rowCount,
+        file: null,
+        error,
+        errors,
+        completedAt: new Date(),
+      })
+      .where(
+        and(eq(invoiceImports.id, id), ne(invoiceImports.status, 'completed')),
+      );
+  }
+
+  async findImport(
+    id: string,
+    userId: string,
+  ): Promise<Omit<
+    InvoiceImport,
+    'userId' | 'fileSha256' | 'file' | 'updatedAt'
+  > | null> {
+    const [invoiceImport] = await this.db
+      .select({
+        id: invoiceImports.id,
+        fileName: invoiceImports.fileName,
+        status: invoiceImports.status,
+        rowCount: invoiceImports.rowCount,
+        error: invoiceImports.error,
+        errors: invoiceImports.errors,
+        createdAt: invoiceImports.createdAt,
+        completedAt: invoiceImports.completedAt,
+      })
+      .from(invoiceImports)
+      .where(and(eq(invoiceImports.id, id), eq(invoiceImports.userId, userId)))
+      .limit(1);
+    return invoiceImport ?? null;
+  }
+
+  async findUnfinishedImportIds(): Promise<string[]> {
+    const unfinished = await this.db
+      .select({ id: invoiceImports.id })
+      .from(invoiceImports)
+      .where(inArray(invoiceImports.status, ['pending', 'processing']));
+    return unfinished.map(({ id }) => id);
   }
 
   async listByUser(

@@ -45,6 +45,7 @@ export const importInvoiceRowSchema = createInvoiceSchema.extend({
 });
 
 export type ImportInvoiceRow = z.infer<typeof importInvoiceRowSchema>;
+export type ImportRowError = { row: number; field: string; message: string };
 
 export class CreateInvoiceDto extends createZodDto(createInvoiceSchema) {}
 export class ListInvoicesDto extends createZodDto(listInvoicesSchema) {}

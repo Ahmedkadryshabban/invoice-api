@@ -2,3 +2,4 @@ allowBuilds:
   '@scarf/scarf': false
   argon2: true
   esbuild: true
+  msgpackr-extract: false

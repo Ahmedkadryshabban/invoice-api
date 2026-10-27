@@ -13,15 +13,6 @@ export type EmailMessage =
   | {
       template: 'checkout_expired';
       data: InvoiceDetails & { paymentUrl: string };
-    }
-  | {
-      template: 'import_completed';
-      data: {
-        fileName: string;
-        importedCount: number;
-        totals: { currency: string; amountCents: number }[];
-        invoices: (InvoiceDetails & { customerEmail: string })[];
-      };
     };
 
 export type RenderedEmail = { subject: string; text: string; html: string };
@@ -57,26 +48,6 @@ export function renderEmail(message: EmailMessage): RenderedEmail {
         data.paymentUrl,
       );
     }
-    case 'import_completed': {
-      const { data } = message;
-      const paragraphs = [
-        `Your file "${data.fileName}" was imported. ${data.importedCount} invoices were recorded as paid.`,
-        `Total: ${data.totals.map(formatMoney).join(', ')}`,
-        ...data.invoices
-          .slice(0, 10)
-          .map(
-            (invoice) =>
-              `${invoice.customerEmail}: ${invoice.description} (${formatMoney(invoice)})`,
-          ),
-      ];
-      if (data.invoices.length > 10) {
-        paragraphs.push(`...and ${data.invoices.length - 10} more.`);
-      }
-      return build(
-        `Import completed: ${data.importedCount} invoices recorded as paid`,
-        paragraphs,
-      );
-    }
   }
 }
 
@@ -98,14 +69,21 @@ function build(
   };
 }
 
+const moneyFormats = new Map<string, Intl.NumberFormat>();
+
 function formatMoney({
   amountCents,
   currency,
 }: Pick<InvoiceDetails, 'amountCents' | 'currency'>): string {
-  return new Intl.NumberFormat('en', {
-    style: 'currency',
-    currency: currency.toUpperCase(),
-  }).format(amountCents / 100);
+  let format = moneyFormats.get(currency);
+  if (!format) {
+    format = new Intl.NumberFormat('en', {
+      style: 'currency',
+      currency: currency.toUpperCase(),
+    });
+    moneyFormats.set(currency, format);
+  }
+  return format.format(amountCents / 100);
 }
 
 function formatDate(date: Date): string {

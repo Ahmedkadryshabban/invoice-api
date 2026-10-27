@@ -1,0 +1,31 @@
+meta {
+  name: import file
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{baseUrl}}/invoices/import
+  body: multipartForm
+  auth: inherit
+}
+
+body:multipart-form {
+  file: @file(../../invoice-api-test-files/invoices-01.csv)
+}
+
+assert {
+  res.status: eq 202
+  res.body.importId: isString
+  res.body.status: eq pending
+}
+
+script:post-response {
+  bru.setVar("importId", res.body.importId);
+}
+
+docs {
+  Uploads one file from the invoice-api-test-files folder next to this project: 50 CSV and 50 XLSX files, 5000 different customers each.
+  To try another file, pick it in the Body tab (the file field). Then run "import status" until it says completed.
+  Uploading the same file again returns 409.
+}

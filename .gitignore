@@ -49,6 +49,9 @@ lerna-debug.log*
 .temp
 .tmp
 
+# Emails written with MAIL_TRANSPORT=file
+/emails
+
 # Runtime data
 pids
 *.pid

@@ -1,0 +1,23 @@
+meta {
+  name: import status
+  type: http
+  seq: 14
+}
+
+get {
+  url: {{baseUrl}}/invoices/imports/{{importId}}
+  body: none
+  auth: inherit
+}
+
+assert {
+  res.status: eq 200
+  res.body.importId: isString
+  res.body.status: isString
+}
+
+docs {
+  Shows the last import you uploaded: every import request saves its importId.
+  status is pending, then processing, then completed (importedCount says how many invoices were saved) or failed (error says why, errors lists bad rows).
+  Run it again until the status is completed or failed.
+}

@@ -4,8 +4,8 @@ import { readSheet } from 'read-excel-file/node';
 import { IMPORT_COLUMNS } from './invoices.dto.ts';
 import { InvalidImportFileException } from './invoices.exceptions.ts';
 
-export const MAX_IMPORT_FILE_BYTES = 1024 * 1024;
-export const MAX_IMPORT_ROWS = 1000;
+export const MAX_IMPORT_FILE_BYTES = 5 * 1024 * 1024;
+const SUPPORTED_EXTENSIONS = ['.csv', '.xlsx'];
 
 const KNOWN_COLUMNS = new Set<string>(IMPORT_COLUMNS);
 const REQUIRED_COLUMNS = IMPORT_COLUMNS.filter((column) => column !== 'paidAt');
@@ -16,17 +16,20 @@ export type ImportRow = { row: number; values: Record<string, string> };
 type SheetRow = { row: number; cells: string[] };
 type CsvRecord = { record: string[]; info: Info };
 
+export function checkImportFileType(fileName: string): void {
+  if (!SUPPORTED_EXTENSIONS.includes(extname(fileName).toLowerCase())) {
+    throw new InvalidImportFileException(
+      'Only .csv and .xlsx files are supported',
+    );
+  }
+}
+
 export async function parseImportFile(file: ImportFile): Promise<ImportRow[]> {
-  const extension = extname(file.originalname).toLowerCase();
-  if (extension === '.csv') {
+  checkImportFileType(file.originalname);
+  if (extname(file.originalname).toLowerCase() === '.csv') {
     return toRows(readCsv(file.buffer));
   }
-  if (extension === '.xlsx') {
-    return toRows(await readExcel(file.buffer));
-  }
-  throw new InvalidImportFileException(
-    'Only .csv and .xlsx files are supported',
-  );
+  return toRows(await readExcel(file.buffer));
 }
 
 function readCsv(buffer: Buffer): SheetRow[] {
@@ -94,11 +97,6 @@ function toRows(table: SheetRow[]): ImportRow[] {
   }
   if (records.length === 0) {
     throw new InvalidImportFileException('The file has no invoice rows');
-  }
-  if (records.length > MAX_IMPORT_ROWS) {
-    throw new InvalidImportFileException(
-      `The file has ${records.length} rows, the limit is ${MAX_IMPORT_ROWS}`,
-    );
   }
 
   return records.map(({ row, cells }) => ({

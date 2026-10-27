@@ -7,6 +7,7 @@ export const envSchema = z.object({
     .default('development'),
   PORT: z.coerce.number().int().positive().default(3000),
   DATABASE_URL: z.url(),
+  REDIS_URL: z.url().default('redis://localhost:6379'),
   JWT_SECRET: z.string().min(32),
   JWT_EXPIRES_IN: z
     .templateLiteral([
@@ -17,6 +18,7 @@ export const envSchema = z.object({
   PUBLIC_URL: z.url().transform((url) => url.replace(/\/+$/, '')),
   STRIPE_SECRET_KEY: z.string().startsWith('sk_test_'),
   STRIPE_WEBHOOK_SECRET: z.string().startsWith('whsec_'),
+  MAIL_TRANSPORT: z.enum(['smtp', 'file']).default('smtp'),
   MAIL_SMTP_HOST: z.string().min(1),
   MAIL_SMTP_PORT: z.coerce.number().int().positive(),
   MAIL_SMTP_USER: z.string().min(1),

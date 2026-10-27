@@ -1,3 +1,4 @@
+import { BullModule } from '@nestjs/bullmq';
 import { Module } from '@nestjs/common';
 import { APP_GUARD, APP_PIPE } from '@nestjs/core';
 import { ConfigModule, ConfigService } from '@nestjs/config';
@@ -30,6 +31,12 @@ import { PaymentsModule } from './modules/payments/payments.module.ts';
       }),
     }),
     ThrottlerModule.forRoot([{ ttl: 60_000, limit: 100 }]),
+    BullModule.forRootAsync({
+      inject: [ConfigService],
+      useFactory: (config: ConfigService<Env, true>) => ({
+        connection: { url: config.get('REDIS_URL', { infer: true }) },
+      }),
+    }),
     DatabaseModule,
     AuthModule,
     InvoicesModule,

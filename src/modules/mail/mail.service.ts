@@ -1,17 +1,22 @@
+import { InjectQueue } from '@nestjs/bullmq';
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import type { Queue } from 'bullmq';
 import type { Env } from '../../config/env.ts';
 import type { Transaction } from '../../database/database.module.ts';
 import type { EmailOutbox } from '../../database/schema/index.ts';
+import {
+  MAIL_SEND_QUEUE,
+  MAX_SEND_ATTEMPTS,
+  SEND_EMAIL_JOB,
+  type SendEmailJob,
+} from './mail.queues.ts';
 import { MailRepository } from './mail.repository.ts';
 import { renderEmail, type EmailMessage } from './mail.templates.ts';
 import { MAILER, type Mailer } from './mailer.provider.ts';
 
-const BATCH_SIZE = 10;
-const LEASE_SECONDS = 300;
-const MAX_ATTEMPTS = 5;
-const RETRY_BASE_SECONDS = 60;
-const RATE_LIMIT_PAUSE_SECONDS = 10;
+const DISPATCH_BATCH_SIZE = 1000;
+const DISPATCH_LEASE_SECONDS = 30 * 60;
 
 export type QueuedEmail = EmailMessage & { to: string; dedupeKey: string };
 
@@ -23,6 +28,8 @@ export class MailService {
     private readonly mailRepository: MailRepository,
     @Inject(MAILER) private readonly mailer: Mailer,
     private readonly config: ConfigService<Env, true>,
+    @InjectQueue(MAIL_SEND_QUEUE)
+    private readonly sendQueue: Queue<SendEmailJob>,
   ) {}
 
   async enqueue(emails: QueuedEmail[], tx?: Transaction): Promise<void> {
@@ -40,32 +47,39 @@ export class MailService {
     await this.mailRepository.insertMany(rows, tx);
   }
 
-  async sendDue(): Promise<void> {
-    const emails = await this.mailRepository.claimDue(
-      BATCH_SIZE,
-      LEASE_SECONDS,
-    );
-    for (const [index, email] of emails.entries()) {
-      const result = await this.send(email);
-      if (result === 'throttled') {
-        const waiting = emails.slice(index).map((queued) => queued.id);
-        await this.mailRepository.releaseClaims(
-          waiting,
-          RATE_LIMIT_PAUSE_SECONDS,
+  async dispatchDue(): Promise<void> {
+    let dispatched = 0;
+    let claimed: string[];
+    do {
+      claimed = await this.mailRepository.claimForDispatch(
+        DISPATCH_BATCH_SIZE,
+        DISPATCH_LEASE_SECONDS,
+      );
+      if (claimed.length > 0) {
+        await this.sendQueue.addBulk(
+          claimed.map((emailId) => ({
+            name: SEND_EMAIL_JOB,
+            data: { emailId },
+            opts: { jobId: emailId },
+          })),
         );
-        this.logger.warn(
-          `SMTP server is rate limiting, ${waiting.length} email(s) wait ${RATE_LIMIT_PAUSE_SECONDS}s`,
-        );
-        return;
       }
+      dispatched += claimed.length;
+    } while (claimed.length === DISPATCH_BATCH_SIZE);
+    if (dispatched > 0) {
+      this.logger.log(`${dispatched} email(s) moved to the send queue`);
     }
   }
 
-  private async send(
-    email: EmailOutbox,
-  ): Promise<'sent' | 'failed' | 'throttled'> {
+  async send(
+    emailId: string,
+    attempt: number,
+  ): Promise<'sent' | 'skipped' | 'throttled'> {
+    const email = await this.mailRepository.findPendingById(emailId);
+    if (!email) return 'skipped';
     try {
-      await this.mailer.sendMail({
+      await this.mailer.send({
+        id: email.id,
         from: this.config.get('MAIL_FROM', { infer: true }),
         to: email.toEmail,
         subject: email.subject,
@@ -74,29 +88,32 @@ export class MailService {
       });
     } catch (error) {
       if (isRateLimited(error)) return 'throttled';
-      await this.handleFailure(email, error);
-      return 'failed';
+      await this.handleFailure(email, attempt, error);
+      throw error;
     }
-    await this.mailRepository.markSent(email.id);
+    await this.mailRepository.markSent(email.id, attempt);
     this.logger.log(`Email ${email.id} (${email.template}) sent`);
     return 'sent';
   }
 
-  private async handleFailure(email: EmailOutbox, error: unknown) {
+  private async handleFailure(
+    email: EmailOutbox,
+    attempt: number,
+    error: unknown,
+  ) {
     const message = error instanceof Error ? error.message : String(error);
     const code = errorCode(error);
-    if (email.attempts >= MAX_ATTEMPTS) {
-      await this.mailRepository.markFailed(email.id, message);
+    if (attempt >= MAX_SEND_ATTEMPTS) {
+      await this.mailRepository.markFailed(email.id, attempt, message);
       this.logger.error(
-        `Email ${email.id} (${email.template}) failed after ${email.attempts} attempts (${code})`,
+        `Email ${email.id} (${email.template}) failed after ${attempt} attempts (${code})`,
       );
       return;
     }
 
-    const delaySeconds = RETRY_BASE_SECONDS * 2 ** (email.attempts - 1);
-    await this.mailRepository.scheduleRetry(email.id, delaySeconds, message);
+    await this.mailRepository.recordFailure(email.id, attempt, message);
     this.logger.warn(
-      `Email ${email.id} (${email.template}) attempt ${email.attempts} failed (${code}), retrying in ${delaySeconds}s`,
+      `Email ${email.id} (${email.template}) attempt ${attempt} failed (${code}), it will be retried`,
     );
   }
 }

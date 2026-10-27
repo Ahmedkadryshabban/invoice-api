@@ -16,15 +16,6 @@ export class UsersRepository {
     return user ?? null;
   }
 
-  async findById(id: string): Promise<User | null> {
-    const [user] = await this.db
-      .select()
-      .from(users)
-      .where(eq(users.id, id))
-      .limit(1);
-    return user ?? null;
-  }
-
   async create(data: NewUser): Promise<User | null> {
     const [user] = await this.db
       .insert(users)
